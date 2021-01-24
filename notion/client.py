@@ -1,6 +1,7 @@
 import hashlib
 import json
 import re
+from typing import Optional
 import uuid
 
 from requests import Session, HTTPError
@@ -131,6 +132,12 @@ class NotionClient(object):
         self.current_user = self.get_user(list(records["notion_user"].keys())[0])
         self.current_space = self.get_space(list(records["space"].keys())[0])
         return records
+
+    def find_user_id(self, user_email: str) -> Optional[str]:
+        response = self.post("findUser", {"email": user_email}).json()
+        if not response:
+            return None
+        return response['value']['value']['id']
 
     def get_email_uid(self):
         response = self.post("getSpaces", {}).json()
