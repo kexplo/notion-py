@@ -557,6 +557,36 @@ class PageBlock(BasicBlock):
                 backlinks.append(self._client.get_block(block_id))
         return backlinks
 
+    def add_reader(self, user_id: str):
+        self._set_permission(user_id, 'reader')
+
+    def del_reader(self, user_id: str):
+        reader_user_ids = tuple(
+            [p['user_id'] for p in self.get()['permissions']
+             if p['role'] == 'reader']
+        )
+        if user_id not in reader_user_ids:
+            logger.warning(f"user {user_id} does not have the reader permission")
+            return
+        self._set_permission(user_id, 'none')
+
+    def _set_permission(self, user_id: str, role: str):
+        if role not in ['read_and_write', 'comment_only', 'reader', 'none']:
+            logger.warning(f"{role} is not a valid role")
+            return
+        with self._client.as_atomic_transaction():
+            self._client.submit_transaction(
+                build_operation(
+                    id=self.id, path=['permissions'],
+                    args={'role': role,
+                          'type': 'user_permission',
+                          'user_id': user_id},
+                    command="setPermissionItem"
+                )
+            )
+
+        self._client.refresh_records(block=[self.id])
+
 
 class BulletedListBlock(BasicBlock):
 
