@@ -1,6 +1,11 @@
+import mimetypes
+import os
+import requests
+
 from cached_property import cached_property
 from copy import deepcopy
 from datetime import datetime, date
+from typing import Any, IO, Union
 from tzlocal import get_localzone
 from uuid import uuid1
 
@@ -10,6 +15,7 @@ from .maps import property_map, field_map
 from .markdown import markdown_to_notion, notion_to_markdown
 from .operations import build_operation
 from .records import Record
+from .settings import S3_URL_PREFIX
 from .utils import (
     add_signed_prefix_as_needed,
     extract_id,
@@ -670,6 +676,55 @@ class CollectionRowBlock(PageBlock):
                 id=self.id, path=[], args={"alive": False}, command="update"
             )
         )
+
+    def upload_binary_to_file_property(self,
+                                       binary: Union[bytes, IO[Any]],
+                                       filename: str,
+                                       property_name: str):
+        prop = tuple(p for p in self.schema if p["name"] == property_name)
+        if not prop:
+            raise AttributeError(f"{property_name} is not exist")
+        prop = prop[0]
+        if prop["type"] != 'file':
+            raise AttributeError(f"{property_name} is not a file property")
+
+        mimetype = mimetypes.guess_type(filename)[0] or "text/plain"
+
+        data = self._client.post(
+            "getUploadFileUrl",
+            {"bucket": "secure", "name": filename, "contentType": mimetype},
+        ).json()
+
+        response = requests.put(
+            data["signedPutUrl"],
+            data=binary,
+            headers={"Content-type": mimetype}
+        )
+        response.raise_for_status()
+
+        file_id = data["signedGetUrl"][len(S3_URL_PREFIX) :].split("/")[0]
+        file_url = data['signedGetUrl'].split('?')[0]
+
+        filelist = self.get('properties').get(prop['id'], [])
+        filelist.append([filename, [["a", file_url]]])
+
+        op1 = build_operation(id=self.id,
+                              path=["properties", prop['id']],
+                              args=filelist,
+                              table="block",
+                              command="set")
+        op2 = build_operation(id=self.id,
+                              path=["file_ids"],
+                              args={"id": file_id},
+                              table="block",
+                              command="listAfter")
+        self._client.submit_transaction([op1, op2])
+
+
+    def upload_file_to_file_property(self, path: str, property_name: str):
+        with open(path, "rb") as f:
+            filename = os.path.basename(path)
+            self.upload_binary_to_file_property(f, filename, property_name)
 
 
 class TemplateBlock(CollectionRowBlock):
